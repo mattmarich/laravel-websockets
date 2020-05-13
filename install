@@ -96,17 +96,17 @@ sed -i '/.*<\/body>.*/i \\t<script src="\{\{ asset('"'"'js\/app.js'"'"') \}\}"><
 sed -i '/.*js\/app.js.*/a \\t<script>\n\t\tEcho.channel('"'"'main'"'"')\n\t\t    .listen('"'"'HeaderNotification'"'"', (e) =>\{ console.log(e.message); \})\n\t<\/script>' ./resources/views/welcome.blade.php
 sed -i '/.*<title>.*/a \\t<meta name="csrf-token" content="{{ csrf_token() }}" \/>' ./resources/views/welcome.blade.php
 
-# get in tinker
-php artisan tinker
-event(new App\Events\HeaderNotification("Hello World"))
-
-# install debug bar if issues
-composer require barryvdh/laravel-debugbar --dev
-
+# Compile resources
 npm run dev
 
+# Open tinker to test. Open the page in your browser and watch for 'Hello World' in console
+# php artisan tinker
+# event(new App\Events\HeaderNotification("Hello World"))
 
-# Laravel vue may need installed, ran the following but not 100% sure required:
+# install debug bar if issues
+# composer require barryvdh/laravel-debugbar --dev
+
+# Laravel vue may need installed, ran the following but not 100% sure if required:
 # composer require laravel/ui
 # php artisan ui vue
 # npm run dev
