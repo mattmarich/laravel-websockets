@@ -1,0 +1,112 @@
+#!/bin/bash
+
+dbName=
+dbUser=
+dpPass=
+appURL=
+appName=
+appKey=
+appSecret=
+
+# cd to the parent dir you want admin project
+
+npm install
+npm install --global cross-env
+composer create-project --prefer-dist laravel/laravel admin
+cd admin
+composer require beyondcode/laravel-websockets
+
+cat > laravel-websockets.conf << EOF
+[program:laravel-websockets]
+command=/usr/bin/php /home/admin/artisan websockets:serve
+numprocs=1
+autostart=true
+autorestart=true
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/laravel-websockets.log
+EOF
+
+supervisorctl update
+
+echo "create database `laravel`" | mysql -u username -p
+echo "grant all privileges on $dbName.* to $dbUser@'localhost' identified by $dbPass" | mysql -u username -p
+
+sed -i "s/APP_NAME=Laravel/APP_NAME=$appName/g" .env
+sed -i "s/APP_URL=http:\/\/localhost/APP_URL=http:\/\/$appURL/g" .env
+sed -i "s/DB_DATABASE=laravel/DB_DATABASE=$dbName/g" .env
+sed -i "s/DB_USERNAME=root/DB_USERNAME=$dbUser/g" .env
+sed -i "s/DB_PASSWORD=/DB_PASSWORD=$dbPass/g" .env
+sed -i 's/BROADCAST_DRIVER=log/BROADCAST_DRIVER=pusher/g' .env  # Users pusher driver but will be using local pusher library rather than their service
+sed -i "s/PUSHER_APP_ID=/PUSHER_APP_ID=$appName/g" .env
+sed -i "s/PUSHER_APP_KEY=/PUSHER_APP_KEY=$appKey/g" .env   # Set to a unique, randon strong password format
+sed -i "s/PUSHER_APP_SECRET=/PUSHER_APP_SECRET=$appSecret/g" .env  # Set to a unique, randon strong password format
+sed -i "s/MIX_PUSHER_APP_KEY=$appKey/MIX_PUSHER_APP_KEY=/g" .env  # Set to a unique, randon strong password format
+
+php artisan vendor:publish --provider="BeyondCode\LaravelWebSockets\WebSocketsServiceProvider" --tag="migrations"
+php artisan migrate
+php artisan vendor:publish --provider="BeyondCode\LaravelWebSockets\WebSocketsServiceProvider" --tag="config"
+
+touch /home/admin/storage/logs/laravel.log
+chown -R www-data. /home/admin/
+
+## Verify running - http://url-here/laravel-websockets
+
+composer require pusher/pusher-php-server "~3.0"
+
+sed -i "/'useTLS' => true,/a \\t\t'host' => 'localhost'," ./config/broadcasting.php
+sed -i "/'host' => 'localhost',/a \\t\tport' => 6001," ./config/broadcasting.php
+sed -i "/'port' => 6001,/a \\t\t'scheme' => 'http'" ./config/broadcasting.php
+sed -i "s/'useTLS' => true,/'useTLS' => false,/g" ./config/broadcasting.php
+sed -i "/'useTLS' => false,/a \\t\t'encrypted' => false," ./config/broadcasting.php
+
+php artisan make:event HeaderNotification
+sed -i 's/class HeaderNotification/class HeaderNotification implements ShouldBroadcast/g' app/Events/HeaderNotification.php
+sed -i 's/public function __construct()/public function __construct($message)/g' app/Events/HeaderNotification.php
+sed -i 's/\/\//$this->message = $message;/g' app/Events/HeaderNotification.php
+sed -i '/.*use Dispatchable.*/a \\t\tpublic $message;' ./app/Events/HeaderNotification.php
+sed -i 's/channel-name/main/g' ./app/Events/HeaderNotification.php
+sed -i 's/new PrivateChannel/new Channel/g' ./app/Events/HeaderNotification.php
+
+npm install laravel-echo pusher-js webpack laravel-mix axios source-map-support
+
+### A portion of this block is already in the script but entire section commented, will do cleanup when I feel like not being lazy
+cat >> ./resources/js/bootstrap.js << EOF
+import Echo from 'laravel-echo';
+window.Pusher = require('pusher-js');
+window.Echo = new Echo({
+    broadcaster: 'pusher',
+    key: process.env.MIX_PUSHER_APP_KEY,
+    cluster: process.env.MIX_PUSHER_APP_CLUSTER,
+    wsHost: window.location.hostname,
+    wsPort: 6001,
+    forceTLS: false,
+    encrypted: false,
+    disableStats: true
+});
+EOF
+
+echo "Following install comment out the following in ./resources/js/bootstrap.js:"
+echo "try {"
+echo "window.Popper = require('popper.js').default;"
+echo "window.$ = window.jQuery = require('jquery');"
+echo "require('bootstrap');"
+echo "} catch (e) {}"
+
+sed -i '/.*<\/body>.*/i \\t<script src="\{\{ asset('"'"'js\/app.js'"'"') \}\}"><\/script>' ./resources/views/welcome.blade.php
+sed -i '/.*js\/app.js.*/a \\t<script>\n\t\tEcho.channel('"'"'main'"'"')\n\t\t    .listen('"'"'HeaderNotification'"'"', (e) =>\{ console.log(e.message); \})\n\t<\/script>' ./resources/views/welcome.blade.php
+sed -i '/.*<title>.*/a \\t<meta name="csrf-token" content="{{ csrf_token() }}" \/>' ./resources/views/welcome.blade.php
+
+# get in tinker
+php artisan tinker
+event(new App\Events\HeaderNotification("Hello World"))
+
+# install debug bar if issues
+composer require barryvdh/laravel-debugbar --dev
+
+npm run dev
+
+
+# Laravel vue may need installed, ran the following but not 100% sure required:
+# composer require laravel/ui
+# php artisan ui vue
+# npm run dev
